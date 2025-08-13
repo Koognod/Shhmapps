@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SHHMAPS - Smell Report Map</title>
+
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+<!-- Leaflet Geocoder -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css"/>
+<link rel="stylesheet" href="styles.css" />
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+</head>
+<body>
+<h1>SHHMAPS</h1>
+
+<!-- Auth Controls -->
+<div id="userAuth" style="text-align:right; padding:10px;">
+  <button id="loginBtn">Log In</button>
+  <button id="logoutBtn" style="display:none;">Log Out</button>
+  <span id="userEmail"></span>
+</div>
+
+<!-- Tabs -->
+<div class="tabs">
+  <button class="tablink active" onclick="openTab('mapTab')">MAP</button>
+  <button class="tablink" onclick="openTab('summaryTab')">SUMMARY</button>
+</div>
+
+<!-- Map Tab -->
+<div id="mapTab" class="tabcontent active">
+  <div id="map"></div>
+  <div id="filters">
+    <h3>Filters</h3>
+    <label>Type:
+      <select id="filterType">
+        <option value="All">All</option>
+        <option value="Floral">Floral</option>
+        <option value="Food">Food</option>
+        <option value="Chemical">Chemical</option>
+        <option value="Smoke">Smoke</option>
+        <option value="Other">Other</option>
+      </select>
+    </label>
+    <label>Min Intensity:
+      <select id="filterIntensity">
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3" selected>3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+      </select>
+    </label>
+    <label>Recentness:
+      <select id="filterRecent">
+        <option value="all" selected>All time</option>
+        <option value="1">Last 1 day</option>
+        <option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option>
+      </select>
+    </label>
+    <button id="applyFilters">Apply Filters</button>
+  </div>
+</div>
+
+<!-- Summary Tab -->
+<div id="summaryTab" class="tabcontent">
+  <div id="dashboard">
+    <h3>Summary Dashboard</h3>
+    <canvas id="chartType"></canvas>
+    <canvas id="chartIntensity"></canvas>
+  </div>
+</div>
+
+<!-- Add smell form modal -->
+<div id="formModal" class="modal">
+  <div class="modal-content">
+    <span id="formClose" class="close">&times;</span>
+    <h2>Submit Smell Report</h2>
+    <form id="smellForm">
+      <label for="description">Description:</label>
+      <textarea id="description" rows="3" required></textarea>
+      <label for="type">Type:</label>
+      <select id="type" required>
+        <option value="">Select type</option>
+        <option value="Floral">Floral</option>
+        <option value="Food">Food</option>
+        <option value="Chemical">Chemical</option>
+        <option value="Smoke">Smoke</option>
+        <option value="Other">Other</option>
+      </select>
+      <label for="intensity">Intensity (1-5):</label>
+      <input type="number" id="intensity" min="1" max="5" value="3" required />
+      <label for="status">Status:</label>
+      <select id="status" required>
+        <option value="">Select status</option>
+        <option value="Constant">Constant</option>
+        <option value="Temporary">Temporary</option>
+      </select>
+      <button type="submit">Submit Report</button>
+    </form>
+  </div>
+</div>
+
+<!-- Scripts -->
+<script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+
+<script>
+/* --- Firebase Initialization with your config --- */
+const firebaseConfig = {
+  apiKey: "AIzaSyCzBBu6q7d5YYRWL54M2MM82hkdjWODX7k",
+  authDomain: "shhmaps-1671d.firebaseapp.com",
+  projectId: "shhmaps-1671d",
+  storageBucket: "shhmaps-1671d.firebasestorage.app",
+  messagingSenderId: "606385976007",
+  appId: "1:606385976007:web:0592d8b143516b242304e2",
+  measurementId: "G-MTXD6Q354S"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+/* --- Authentication UI logic --- */
+const loginBtn = document.getElementById('loginBtn');
+const logoutBtn = document.getElementById('logoutBtn');
+const userEmailSpan = document.getElementById('userEmail');
+
+loginBtn.addEventListener('click', () => {
+  const email = prompt('Enter your email:');
+  const password = prompt('Enter your password:');
+  if (email && password) {
+    auth.signInWithEmailAndPassword(email, password)
+      .catch(error => alert('Login failed: ' + error.message));
+  }
+});
+
+logoutBtn.addEventListener('click', () => auth.signOut());
+
+auth.onAuthStateChanged(user => {
+  if(user){
+    userEmailSpan.textContent = `Logged in: ${user.email}`;
+    loginBtn.style.display = 'none';
+    logoutBtn.style.display = 'inline';
+  } else {
+    userEmailSpan.textContent = '';
+    loginBtn.style.display = 'inline';
+    logoutBtn.style.display = 'none';
+  }
+});
+
+/* --- Leaflet map setup --- */
+const map = L.map('map').setView([39.5, -98.35], 4);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+let markers = L.markerClusterGroup();
+map.addLayer(markers);
+
+const typeColors = {
+  Floral:'#a1c45a',
+  Food:'#f4a261',
+  Chemical:'#e76f51',
+  Smoke:'#606060',
+  Other:'#6a4c93'
+};
+
+/* --- Geocoder Control --- */
+L.Control.geocoder({ defaultMarkGeocode: false })
+  .on('markgeocode', e => openForm(e.geocode.center))
+  .addTo(map);
+
+/* --- Tab switching --- */
+function openTab(tabId){
+  document.querySelectorAll('.tablink').forEach(btn => btn.classList.remove('active'));
+  document.querySelectorAll('.tabcontent').forEach(tc => tc.classList.remove('active'));
+  document.querySelector(`.tablink[onclick="openTab('${tabId}')"]`).classList.add('active');
+  document.getElementById(tabId).classList.add('active');
+}
+
+/* --- Form modal --- */
+const formModal = document.getElementById('formModal');
+const formClose = document.getElementById('formClose');
+const smellForm = document.getElementById('smellForm');
+const descriptionInput = document.getElementById('description');
+const typeInput = document.getElementById('type');
+const intensityInput = document.getElementById('intensity');
+const statusInput = document.getElementById('status');
+
+let currentLatLng = null;
+function openForm(latlng){
+  currentLatLng = latlng;
+  smellForm.reset();
+  formModal.style.display = 'block';
+}
+
+formClose.onclick = () => formModal.style.display = 'none';
+window.onclick = e => { if(e.target === formModal) formModal.style.display = 'none'; };
+
+map.on('click', e => openForm(e.latlng));
+
+/* --- Submit smell report to Firestore --- */
+smellForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  if(!auth.currentUser){
+    alert('Please log in to submit a smell report.');
+    formModal.style.display = 'none';
+    return;
+  }
+  if(!currentLatLng){
+    alert('No location selected.');
+    return;
+  }
+
+  const report = {
+    lat: currentLatLng.lat,
+    lng: currentLatLng.lng,
+    description: descriptionInput.value.trim(),
+    type: typeInput.value,
+    intensity: parseInt(intensityInput.value),
+    status: statusInput.value,
+    timestamp: new Date().toISOString(),
+    userId: auth.currentUser.uid
+  };
+
+  try {
+    await db.collection('smellReports').add(report);
+    formModal.style.display = 'none';
+  } catch(error) {
+    alert('Failed to submit report: ' + error.message);
+  }
+});
+
+/* --- Filters Elements --- */
+const filterType = document.getElementById('filterType');
+const filterIntensity = document.getElementById('filterIntensity');
+const filterRecent = document.getElementById('filterRecent');
+const applyFiltersBtn = document.getElementById('applyFilters');
+
+/* --- Variables for Charts --- */
+let typeChart = null;
+let intensityChart = null;
+
+/* --- Update Dashboard charts --- */
+function updateDashboardFromReports(reports){
+  const typeCount = {};
+  Object.keys(typeColors).forEach(t=>typeCount[t]=0);
+  const intensityCount = [0,0,0,0,0];
+
+  reports.forEach(r => {
+    if(r.status !== 'Passed'){
+      if(typeCount[r.type] !== undefined) typeCount[r.type]++;
+      intensityCount[r.intensity - 1]++;
+    }
+  });
+
+  if(typeChart) typeChart.destroy();
+  if(intensityChart) intensityChart.destroy();
+
+  const typeCtx = document.getElementById('chartType').getContext('2d');
+  typeChart = new Chart(typeCtx, {
+    type: 'pie',
+    data: {
+      labels: Object.keys(typeCount),
+      datasets: [{ data: Object.values(typeCount), backgroundColor: Object.keys(typeColors).map(t=>typeColors[t]) }]
+    },
+    options: { plugins: { title: { display: true, text: 'Smell Reports by Type' } } }
+  });
+
+  const intensityCtx = document.getElementById('chartIntensity').getContext('2d');
+  intensityChart = new Chart(intensityCtx, {
+    type: 'bar',
+    data: {
+      labels: ['1','2','3','4','5'],
+      datasets: [{ label: 'Reports', data: intensityCount, backgroundColor: '#4a90e2' }]
+    },
+    options: {
+      plugins: { title: { display: true, text: 'Smell Reports by Intensity' } },
+      scales: { y: { beginAtZero: true, precision: 0 } }
+    }
+  });
+}
+
+/* --- Load reports from Firestore with filters, update markers and charts --- */
+let unsubscribe = null;
+function loadReportsWithFilters(filters = {}) {
+  if(unsubscribe) unsubscribe();
+  markers.clearLayers();
+
+  let query = db.collection('smellReports');
+  if(filters.type && filters.type !== 'All') query = query.where('type', '==', filters.type);
+  if(filters.minIntensity) query = query.where('intensity', '>=', filters.minIntensity);
+  if(filters.recentDays && filters.recentDays !== 'all') {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - Number(filters.recentDays));
+    query = query.where('timestamp', '>=', cutoff.toISOString());
+  }
+
+  unsubscribe = query.onSnapshot(snapshot => {
+    markers.clearLayers();
+    const allReports = [];
+    snapshot.forEach(doc => {
+      const r = doc.data();
+      allReports.push(r);
+      if(r.status === 'Passed') return;
+      const color = typeColors[r.type] || '#666';
+      const marker = L.circleMarker([r.lat, r.lng], {
+        radius: 8,
+        fillColor: color,
+        color: '#000',
+        weight: 1,
+        fillOpacity: 0.7
+      });
+      let popupContent = `<b>Type:</b> ${r.type}<br/><b>Description:</b> ${r.description}<br/><b>Intensity:</b> ${r.intensity}<br/><b>Status:</b> ${r.status}<br/><b>Reported:</b> ${new Date(r.timestamp).toLocaleString()}`;
+      if(r.status === 'Temporary' && auth.currentUser && r.userId === auth.currentUser.uid){
+        popupContent += `<br/><button onclick="markAsPassed('${doc.id}')">Mark as Passed</button>`;
+      }
+      marker.bindPopup(popupContent);
+      markers.addLayer(marker);
+    });
+    updateDashboardFromReports(allReports);
+  });
+}
+
+/* --- Mark a report as Passed --- */
+async function markAsPassed(docId){
+  if(!auth.currentUser){
+    alert('You must be logged in to update reports.');
+    return;
+  }
+  try {
+    const docRef = db.collection('smellReports').doc(docId);
+    const docSnap = await docRef.get();
+    if(!docSnap.exists){
+      alert('Report not found.');
+      return;
+    }
+    if(docSnap.data().userId !== auth.currentUser.uid){
+      alert('You can only update your own reports.');
+      return;
+    }
+    await docRef.update({ status: 'Passed' });
+  } catch(e) {
+    alert('Failed to update report: ' + e.message);
+  }
+}
+window.markAsPassed = markAsPassed;
+
+/* --- Filter apply button --- */
+applyFiltersBtn.addEventListener('click', () => {
+  const filters = {
+    type: filterType.value,
+    minIntensity: Number(filterIntensity.value),
+    recentDays: filterRecent.value
+  };
+  loadReportsWithFilters(filters);
+});
+
+/* --- Load all reports on initial load with default filters --- */
+loadReportsWithFilters({
+  type: filterType.value,
+  minIntensity: Number(filterIntensity.value),
+  recentDays: filterRecent.value
+});
+
+</script>
+</body>
+</html>
